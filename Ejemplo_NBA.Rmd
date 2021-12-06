@@ -1,0 +1,173 @@
+---
+title: "Regresión con Componentes Principales"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+  citation_package: natbib
+biblio-style: apsr
+---
+
+```{r setup, warning=FALSE, message=FALSE, echo=TRUE}
+#Se cargan las librerías
+library(tidyverse)
+library(ggplot2)
+library(GGally)
+library(car)
+library(pls)
+library(tidymodels)
+set.seed(1234)
+```
+
+## Conjunto de datos: Jugadores de la NBA
+
+Se utilizará un conjunto de datos con información sobre jugadores de la NBA obtenido del sitio web Basketball Reference (https://www.basketball-reference.com/), que fue preprocesado por los docentes de EEA. Incluye información de jugadores de la NBA para la temporada 2019-2020 en base a sus estadísticas de juego durante la temporada 2018-2019. La variable respuesta es salario.
+
+```{r}
+# Los datos de salario son para la temporada 2019-2020
+nba = read_csv("_nba_player_stats_salary_2019_2020.csv") %>%
+  rename(salary = mean_salary_2019_2020) %>% 
+  mutate(Pos = str_remove(string = Pos, pattern = "\\-.*")) %>% 
+  mutate_all(~replace(., is.na(.), 0))
+nba
+```
+
+```{r}
+#Se conservan solo las variables numéricas
+nba_num<-nba%>%select_if(is.numeric) 
+```
+
+## Análisis exploratorio
+```{r}
+#Correlación de Pearson
+nba_num %>% 
+  ggcorr(., layout.exp = 5, hjust = 1, size = 3, nbreaks = 5, color = "grey50") + 
+  labs(title='Correlograma de variables cuantitativas')
+```
+
+Un gran número de variables presenta una correlación positiva por arriba en el rango [0.6,1]
+
+```{r}
+#Se genera un nuevo dataframe sin la variable respuesta "salary"
+nba_x<-nba_num%>%select(-c(salary))
+```
+
+## Ajuste de Modelo Lineal
+
+```{r}
+#Estandarización 
+nba_xs<-as.data.frame(scale(nba_x))
+nba_y<-nba_num%>%select(c(salary))
+nba_ys<-as.data.frame(scale(nba_y))
+nba_xs_y<-data.frame(nba_y,nba_xs)
+#Eliminación de NA
+nba_xs_y<-nba_xs_y%>%select(-c(X2P,X2PA,TRB,PTS))
+```
+
+```{r}
+#Modelo Lineal
+ml<-lm(salary~.,data=nba_xs_y)
+tidy_ml <- tidy(ml, conf.int = TRUE)
+tidy_ml
+```
+```{r}
+glance(ml)
+```
+
+
+Al ajustar el modelo, se observa que, a pesar de tener un coeficiente de determinación de 0.66, la mayoría de las variables resultan no significativas. Además, el coeficiente de algunas variables, por ejemplo G, tiene signo negativo, contrario a lo que se espera del efecto del aumento de la cantidad de partidos sobre el salario de un jugador. 
+
+```{r}
+#Diagnóstico formal de multicolinealidad: VIF
+VIF<-as.data.frame(vif(ml))
+print(VIF)
+```
+Se observa que la mayoría de las variables presentan un VIF alto (cercano o mayor a 10), indicando la existencia de multicolinealidad.
+
+```{r}
+#Se ajusta un modelo lineal solo con las variables significativas
+ml_3<-lm(salary~Age+G+TOV.,data=nba_xs_y)
+tidy_ml_3 <- tidy(ml_3, conf.int = TRUE)
+tidy_ml_3
+```
+
+```{r}
+glance(ml_3)
+```
+
+El modelo tiene un coeficiente de determinación bajo (0.18)
+
+## Regresión con componentes principales
+
+```{r}
+ml_pcr<-pcr(salary~.,data=nba_xs_y,scale=TRUE,validation="CV")
+summary(ml_pcr)
+```
+
+De acuerdo a la salida del modelo, el error se minimiza con 18 componentes principales, que explicarían el 63.8% de la variabilidad.
+
+```{r}
+validationplot(ml_pcr,val.type="MSEP")
+validationplot(ml_pcr, val.type = "R2")
+```
+
+```{r}
+coef_pcr<-data.frame(ml_pcr$coefficients)
+```
+
+Finalmente, ajustamos PCR en el conjunto de datos usando M = 18, el número de componentes adecuado identificado por validación cruzada.
+
+
+```{r}
+ml_pcr_18 <-pcr(salary~.,data=nba_xs_y,scale=TRUE,validation="CV",ncomp=18)
+summary(ml_pcr_18)
+```
+
+```{r}
+validationplot(ml_pcr_18,val.type="MSEP")
+validationplot(ml_pcr_18, val.type = "R2")
+```
+El modelo ajustado por regresión por componentes principales, con 18 PC, tiene un coeficiente de determinación de ~0.58
+
+
+
+A continuación, tomamos las componentes principales para ajustar un modelo lineal
+
+```{r}
+nba.pca1<-prcomp(nba_xs_y[,2:43],scale=TRUE)
+summary(nba.pca1)$importance
+pcss<-as.data.frame(nba.pca1$x)
+pcs_y<-data.frame(nba_y,pcss)
+
+```
+
+```{r}
+#Datos proyectadoos en PC1
+ggplot(pcs_y, aes(x=PC1, y=salary)) + 
+  geom_point(size=3) +  
+  theme(legend.position="none")
+```
+
+```{r}
+#Datos proyectados en PC2
+ggplot(pcs_y, aes(x=PC2, y=salary)) + 
+  geom_point(size=3) +  
+  theme(legend.position="none")
+```
+
+```{r}
+#Se ajusta un modelo lineal con las primeras 18 PC
+ml_PC18<-lm(salary~PC1+PC2+PC3+PC4+PC5+PC6+PC7+PC8+PC9+PC10+PC11+PC12+PC13+PC14+PC15+PC16+PC17+PC18,data=pcs_y)
+summary(ml_PC18)
+```
+
+```{r}
+VIF2<-as.data.frame(vif(ml_PC18))
+print(VIF2)
+```
+
+
+
+
+
+
